@@ -19,6 +19,22 @@ import { ChatView, VIEW_TYPE_CHAT } from "./views/chat/Chat";
 import { SmartGraphView, VIEW_TYPE_SMART_GRAPH } from "./views/smart-graph/SmartGraphView";
 import SettingsTab from "./views/settings/Settings";
 import { VectorStoreService } from "./vectorstore";
+// [MISTRAL] Mistral-LLM importieren
+import { MistralLLM } from "./llm/mistral";
+
+// [MISTRAL] PluginSettings-Interface und Defaults
+interface PluginSettings {
+  mistralApiKey: string;
+  useMistral: boolean;
+  mistralModel: string;
+  // [MISTRAL] Weitere Einstellungen können hier hinzugefügt werden
+}
+
+const DEFAULT_SETTINGS: PluginSettings = {
+  mistralApiKey: "",
+  useMistral: false,
+  mistralModel: "mistral-tiny",
+};
 
 const SUPPORTED_CHAT_ATTACHMENT_EXTENSIONS = new Set([
 	"txt",
@@ -41,6 +57,8 @@ export default class SecondBrainPlugin extends Plugin {
 	pendingChangesStore!: PendingChangesStore;
 	queryClient = getQueryClient();
 	pluginData!: PluginDataStore;
+	// [MISTRAL] Plugin-Einstellungen
+	settings: PluginSettings;
 
 	private getAddToChatMenuLabel(selectedCount: number): string {
 		if (selectedCount <= 1) {
@@ -145,6 +163,8 @@ export default class SecondBrainPlugin extends Plugin {
 
 	async onload() {
 		setPlugin(this);
+		// [MISTRAL] Einstellungen laden
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		this.pluginData = await createData(this);
 
 		// Create Skills Service instance (discovery deferred to onLayoutReady)
@@ -251,7 +271,8 @@ export default class SecondBrainPlugin extends Plugin {
 			},
 		});
 
-		this.addSettingTab(new SettingsTab(this));
+		// [MISTRAL] SettingsTab registrieren
+		this.addSettingTab(new SettingsTab(this.app, this));
 
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
@@ -263,6 +284,10 @@ export default class SecondBrainPlugin extends Plugin {
 
 		// Create Agent Manager (v2) — constructor is cheap, heavy init deferred to onLayoutReady
 		this.agentManager = new AgentManager(this);
+		// [MISTRAL] Mistral-LLM registrieren
+		this.agentManager.registerLLM("mistral", (apiKey: string, model: string) => {
+			return new MistralLLM(apiKey, model);
+		});
 		createMessenger(this.agentManager);
 		this.registerNotebookNavigatorMenus();
 
@@ -356,6 +381,11 @@ export default class SecondBrainPlugin extends Plugin {
 		};
 		document.addEventListener("s2b-pending-changes-updated", refreshReadingViews);
 		this.register(() => document.removeEventListener("s2b-pending-changes-updated", refreshReadingViews));
+	}
+
+	// [MISTRAL] Methode zum Speichern der Einstellungen
+	async saveSettings() {
+		await this.saveData(this.settings);
 	}
 
 	onunload() {
