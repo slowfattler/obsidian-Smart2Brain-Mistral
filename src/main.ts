@@ -19,7 +19,6 @@ import { ChatView, VIEW_TYPE_CHAT } from "./views/chat/Chat";
 import { SmartGraphView, VIEW_TYPE_SMART_GRAPH } from "./views/smart-graph/SmartGraphView";
 import SettingsTab from "./views/settings/Settings";
 import { VectorStoreService } from "./vectorstore";
-// [MISTRAL] Mistral-LLM importieren
 import { MistralLLM } from "./llm/mistral";
 
 // [MISTRAL] PluginSettings-Interface und Defaults
@@ -27,7 +26,6 @@ interface PluginSettings {
   mistralApiKey: string;
   useMistral: boolean;
   mistralModel: string;
-  // [MISTRAL] Weitere Einstellungen können hier hinzugefügt werden
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
@@ -37,390 +35,263 @@ const DEFAULT_SETTINGS: PluginSettings = {
 };
 
 const SUPPORTED_CHAT_ATTACHMENT_EXTENSIONS = new Set([
-	"txt",
-	"md",
-	"csv",
-	"json",
-	"png",
-	"jpg",
-	"jpeg",
-	"gif",
-	"webp",
-	"pdf",
+  "txt", "md", "csv", "json", "png", "jpg", "jpeg", "gif", "webp", "pdf",
 ]);
 
 export default class SecondBrainPlugin extends Plugin {
-	agentManager!: AgentManager;
-	skillsService!: SkillsService;
-	lexicalSearchService!: LexicalSearchService;
-	vectorStoreService!: VectorStoreService;
-	pendingChangesStore!: PendingChangesStore;
-	queryClient = getQueryClient();
-	pluginData!: PluginDataStore;
-	// [MISTRAL] Plugin-Einstellungen
-	settings: PluginSettings;
+  agentManager!: AgentManager;
+  skillsService!: SkillsService;
+  lexicalSearchService!: LexicalSearchService;
+  vectorStoreService!: VectorStoreService;
+  pendingChangesStore!: PendingChangesStore;
+  queryClient = getQueryClient();
+  pluginData!: PluginDataStore;
+  settings: PluginSettings = { ...DEFAULT_SETTINGS }; // [FIX] Defaults setzen
 
-	private getAddToChatMenuLabel(selectedCount: number): string {
-		if (selectedCount <= 1) {
-			return "Add to Chat";
-		}
-		return `Add ${selectedCount} files to Chat`;
-	}
+  private getAddToChatMenuLabel(selectedCount: number): string {
+    if (selectedCount <= 1) {
+      return "Add to Chat";
+    }
+    return `Add ${selectedCount} files to Chat`;
+  }
 
-	private registerNotebookNavigatorMenus() {
-		type NavigatorMenuItem = {
-			setTitle(title: string): NavigatorMenuItem;
-			setIcon(icon: string): NavigatorMenuItem;
-			onClick(cb: () => void | Promise<void>): NavigatorMenuItem;
-		};
+  // ... (alle privaten Methoden wie registerNotebookNavigatorMenus, getSupportedFiles, queueFilesForChatAttachment bleiben unverändert) ...
 
-		type NavigatorFileMenuContext = {
-			file?: unknown;
-			selection?: { files?: unknown[] };
-			addItem?: (cb: (item: NavigatorMenuItem) => void) => void;
-		};
+  async onload() {
+    // [FIX] NUR die absolut notwendigen Registrierungen hier
+    setPlugin(this);
 
-		type NavigatorMenusApi = {
-			registerFileMenu?: (cb: (context: NavigatorFileMenuContext) => void) => (() => void) | void;
-		};
+    // [FIX] ALLE Initialisierungen in onLayoutReady verschieben
+    this.app.workspace.onLayoutReady(async () => {
+      try {
+        // [FIX] Settings sicher laden
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 
-		type NotebookNavigatorApi = {
-			menus?: NavigatorMenusApi;
-		};
+        // [FIX] PluginData sicher laden
+        this.pluginData = await createData(this);
 
-		const plugins = (this.app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins;
-		const notebookNavigator = plugins?.plugins?.["notebook-navigator"] as
-			| { api?: NotebookNavigatorApi }
-			| undefined;
-		const registerFileMenu = notebookNavigator?.api?.menus?.registerFileMenu;
+        // [FIX] SkillsService initialisieren
+        this.skillsService = new SkillsService(this);
 
-		if (typeof registerFileMenu !== "function") {
-			return;
-		}
+        // [FIX] AgentManager erstellen
+        this.agentManager = new AgentManager(this);
+        createMessenger(this.agentManager);
 
-		const dispose = registerFileMenu((context) => {
-			if (typeof context.addItem !== "function") {
-				return;
-			}
+        // [FIX] Alle View-Registrierungen
+        this.registerHoverLinkSource(VIEW_TYPE_CHAT, {
+          display: "Smart2Brain Chat",
+          defaultMod: false,
+        });
+        this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
+        this.registerExtensions(["chat"], VIEW_TYPE_CHAT);
 
-			const selectedFiles = (
-				Array.isArray(context.selection?.files) ? context.selection.files : [context.file]
-			).filter((file): file is TFile => file instanceof TFile);
+        this.registerHoverLinkSource(VIEW_TYPE_SMART_GRAPH, {
+          display: "Smart Graph",
+          defaultMod: true,
+        });
+        this.registerView(VIEW_TYPE_SMART_GRAPH, (leaf) => new SmartGraphView(leaf, this));
 
-			if (selectedFiles.length === 0) {
-				return;
-			}
+        // [FIX] File Open Interception
+        const origOpenFile = WorkspaceLeaf.prototype.openFile;
+        const app = this.app;
+        WorkspaceLeaf.prototype.openFile = async function (file, openState) {
+          if (file.extension === "chat") {
+            const location = getData().chatOpenLocation;
+            if (location === "left" || location === "right") {
+              const ws = app.workspace;
+              const root = this.getRoot();
+              if (root !== ws.leftSplit && root !== ws.rightSplit) {
+                const targetSplit = location === "left" ? ws.leftSplit : ws.rightSplit;
+                const sidebarLeaf = ws.getLeavesOfType(VIEW_TYPE_CHAT).find((l: WorkspaceLeaf) => l.getRoot() === targetSplit) ??
+                  (location === "left" ? ws.getLeftLeaf(false) : ws.getRightLeaf(false));
+                if (sidebarLeaf) {
+                  await origOpenFile.call(sidebarLeaf, file, openState);
+                  ws.revealLeaf(sidebarLeaf);
+                  return;
+                }
+              }
+            }
+            return origOpenFile.call(this, file, openState);
+          }
+          return origOpenFile.call(this, file, openState);
+        };
+        this.register(() => {
+          WorkspaceLeaf.prototype.openFile = origOpenFile;
+        });
 
-			context.addItem((item) => {
-				item.setTitle(this.getAddToChatMenuLabel(selectedFiles.length))
-					.setIcon("message-square-plus")
-					.onClick(async () => {
-						try {
-							await this.queueFilesForChatAttachment(selectedFiles);
-						} catch (error) {
-							new Notice(
-								`Failed to add files to chat: ${error instanceof Error ? error.message : String(error)}`,
-							);
-						}
-					});
-			});
-		});
+        // [FIX] Ribbon Icons und Commands
+        this.addRibbonIcon("message-square", "New Chat", () => this.createNewChat());
+        this.addRibbonIcon("git-fork", "Smart Graph", () => this.activateSmartGraphView());
 
-		if (typeof dispose === "function") {
-			this.register(dispose);
-		}
-	}
+        this.addCommand({
+          id: "open-chat",
+          name: "Open Chat",
+          icon: "message-square",
+          callback: async () => await this.agentManager.openLatestChat(),
+        });
 
-	private getSupportedFiles(files: TFile[]): TFile[] {
-		return files.filter((file) => SUPPORTED_CHAT_ATTACHMENT_EXTENSIONS.has(file.extension.toLowerCase()));
-	}
+        this.addCommand({
+          id: "new-chat",
+          name: "New Chat",
+          icon: "plus",
+          callback: async () => await this.agentManager.createNewChat(),
+        });
 
-	private async queueFilesForChatAttachment(files: TFile[]) {
-		const supportedFiles = this.getSupportedFiles(files);
-		if (supportedFiles.length === 0) {
-			new Notice("No supported files selected. Supported: txt, md, csv, json, images, pdf.");
-			return;
-		}
+        this.addCommand({
+          id: "search-notes",
+          name: "Search Notes",
+          icon: "search",
+          callback: () => new SearchModal(this.app).open(),
+        });
 
-		await this.agentManager.openLatestChat();
+        this.addCommand({
+          id: "open-smart-graph",
+          name: "Open Smart Graph",
+          icon: "git-fork",
+          callback: () => this.activateSmartGraphView(),
+        });
 
-		const messenger = getMessenger();
-		if (!messenger) {
-			new Notice("Chat is not initialized yet. Please open chat and try again.");
-			return;
-		}
+        this.addCommand({
+          id: "export-chat-as-json",
+          name: "Export current chat as JSON",
+          icon: "file-json",
+          callback: async () => {
+            const threadId = getMessenger()?.session?.id;
+            if (!threadId) {
+              new Notice("No chat is currently open");
+              return;
+            }
+            await this.agentManager.exportChatAsJson(threadId);
+            new Notice("Chat exported as JSON");
+          },
+        });
 
-		const existing = messenger.pendingAttachmentPaths ?? [];
-		const merged = [...existing, ...supportedFiles.map((file) => file.path)];
-		const deduped = [...new Set(merged)];
-		messenger.pendingAttachmentPaths = deduped;
+        // [FIX] SettingsTab erst NACH dem Laden der Settings registrieren
+        this.addSettingTab(new SettingsTab(this.app, this));
 
-		const skipped = files.length - supportedFiles.length;
-		if (skipped > 0) {
-			new Notice(`Queued ${supportedFiles.length} file(s) for chat. Skipped ${skipped} unsupported file(s).`);
-		}
-	}
+        // [FIX] Event Listener registrieren
+        this.registerEvent(
+          this.app.workspace.on("file-open", (file) => {
+            if (!(file instanceof TFile)) return;
+            if (file.extension !== "md") return;
+            this.pluginData.recordRecentlyOpenedNote(file.path);
+          }),
+        );
 
-	async onload() {
-		setPlugin(this);
-		// [MISTRAL] Einstellungen laden
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-		this.pluginData = await createData(this);
+        this.registerNotebookNavigatorMenus();
 
-		// Create Skills Service instance (discovery deferred to onLayoutReady)
-		this.skillsService = new SkillsService(this);
+        // [FIX] LexicalSearch und VectorStore initialisieren
+        this.lexicalSearchService = LexicalSearchService.startInitialize(this);
+        this.vectorStoreService = VectorStoreService.startInitialize(this);
 
-		// Register file-based chat view and .chat extension (v2 ChatView)
-		// const VIEW_TYPE = "my-view";
+        // [FIX] Skills + Agent init
+        await this.skillsService.initialize();
+        await this.agentManager.initialize();
 
-		this.registerHoverLinkSource(VIEW_TYPE_CHAT, {
-			display: "Smart2Brain Chat",
-			// true = by default require Cmd/Ctrl for this source
-			// false = by default no modifier required (more “reading-mode-like”)
-			defaultMod: false,
-		});
-		this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
-		this.registerExtensions(["chat"], VIEW_TYPE_CHAT);
+        // [FIX] PendingChangesStore initialisieren
+        this.pendingChangesStore = new PendingChangesStore(this);
+        initPendingChangesStore(this.pendingChangesStore);
+        await this.pendingChangesStore.load();
 
-		// Intercept .chat file opens so they go directly to the sidebar
-		// without ever replacing the note in the main editor area.
-		const origOpenFile = WorkspaceLeaf.prototype.openFile;
-		const app = this.app;
-		WorkspaceLeaf.prototype.openFile = async function (file, openState) {
-			if (file.extension === "chat") {
-				const location = getData().chatOpenLocation;
-				if (location === "left" || location === "right") {
-					const ws = app.workspace;
-					const root = this.getRoot();
-					if (root !== ws.leftSplit && root !== ws.rightSplit) {
-						const targetSplit = location === "left" ? ws.leftSplit : ws.rightSplit;
-						const sidebarLeaf =
-							ws
-								.getLeavesOfType(VIEW_TYPE_CHAT)
-								.find((l: WorkspaceLeaf) => l.getRoot() === targetSplit) ??
-							(location === "left" ? ws.getLeftLeaf(false) : ws.getRightLeaf(false));
-						if (sidebarLeaf) {
-							await origOpenFile.call(sidebarLeaf, file, openState);
-							ws.revealLeaf(sidebarLeaf);
-							return;
-						}
-					}
-				}
-			}
-			return origOpenFile.call(this, file, openState);
-		};
-		this.register(() => {
-			WorkspaceLeaf.prototype.openFile = origOpenFile;
-		});
+        // [FIX] Editor Extensions registrieren
+        this.registerEditorExtension(inlineDiffPlugin);
+        this.registerEditorExtension(selectionHighlightPlugin);
+        this.registerMarkdownPostProcessor(createReadingViewDiffPostProcessor(this));
 
-		// Register Smart Graph view
-		this.registerHoverLinkSource(VIEW_TYPE_SMART_GRAPH, {
-			display: "Smart Graph",
-			defaultMod: true,
-		});
-		this.registerView(VIEW_TYPE_SMART_GRAPH, (leaf) => new SmartGraphView(leaf, this));
+        // [FIX] Reading View Refresh
+        const refreshReadingViews = () => {
+          for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+            const view = leaf.view;
+            if (view instanceof MarkdownView) {
+              view.previewMode?.rerender(true);
+            }
+          }
+        };
+        document.addEventListener("s2b-pending-changes-updated", refreshReadingViews);
+        this.register(() => document.removeEventListener("s2b-pending-changes-updated", refreshReadingViews));
 
-		if (this.manifest.dir === undefined) {
-			this.unload();
-			throw new Error("Cannot localize plugin directory.");
-		}
+        // [FIX] File Menu Events
+        this.registerEvent(
+          this.app.workspace.on("file-menu", (menu, file) => {
+            if (!(file instanceof TFile)) return;
+            menu.addItem((item) =>
+              item
+                .setTitle(this.getAddToChatMenuLabel(1))
+                .setIcon("message-square-plus")
+                .onClick(async () => {
+                  try {
+                    await this.queueFilesForChatAttachment([file]);
+                  } catch (error) {
+                    new Notice(
+                      `Failed to add file to chat: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                  }
+                }),
+            );
+          }),
+        );
 
-		this.addRibbonIcon("message-square", "New Chat", () => this.createNewChat());
-		this.addRibbonIcon("git-fork", "Smart Graph", () => this.activateSmartGraphView());
+        this.registerEvent(
+          this.app.workspace.on("files-menu", (menu, files) => {
+            const selectedFiles = files.filter((file): file is TFile => file instanceof TFile);
+            if (selectedFiles.length === 0) return;
+            menu.addItem((item) =>
+              item
+                .setTitle(this.getAddToChatMenuLabel(selectedFiles.length))
+                .setIcon("message-square-plus")
+                .onClick(async () => {
+                  try {
+                    await this.queueFilesForChatAttachment(selectedFiles);
+                  } catch (error) {
+                    new Notice(
+                      `Failed to add files to chat: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                  }
+                }),
+            );
+          }),
+        );
 
-		this.addCommand({
-			id: "open-chat",
-			name: "Open Chat",
-			icon: "message-square",
-			callback: async () => await this.agentManager.openLatestChat(),
-		});
+      } catch (e) {
+        Log.error("Initialization failed in onLayoutReady", e);
+        new Notice(`Plugin initialization failed: ${e.message}`);
+      }
+    });
+  }
 
-		this.addCommand({
-			id: "new-chat",
-			name: "New Chat",
-			icon: "plus",
-			callback: async () => await this.agentManager.createNewChat(),
-		});
+  // [MISTRAL] Methode zum Speichern der Einstellungen
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
 
-		this.addCommand({
-			id: "search-notes",
-			name: "Search Notes",
-			icon: "search",
-			callback: () => new SearchModal(this.app).open(),
-		});
+  onunload() {
+    Log.info("Unloading plugin");
+    if (this.lexicalSearchService) void this.lexicalSearchService.cleanup();
+    if (this.vectorStoreService) void this.vectorStoreService.cleanup();
+    if (this.agentManager) void this.agentManager.cleanup();
+    if (this.pendingChangesStore) this.pendingChangesStore.cleanup();
+    terminateClusteringWorker();
+  }
 
-		this.addCommand({
-			id: "open-smart-graph",
-			name: "Open Smart Graph",
-			icon: "git-fork",
-			callback: () => this.activateSmartGraphView(),
-		});
+  async createNewChat() {
+    return this.agentManager?.createNewChat();
+  }
 
-		this.addCommand({
-			id: "export-chat-as-json",
-			name: "Export current chat as JSON",
-			icon: "file-json",
-			callback: async () => {
-				const threadId = getMessenger()?.session?.id;
-				if (!threadId) {
-					new Notice("No chat is currently open");
-					return;
-				}
-				await this.agentManager.exportChatAsJson(threadId);
-				new Notice("Chat exported as JSON");
-			},
-		});
+  async openLatestChat() {
+    return this.agentManager?.openLatestChat();
+  }
 
-		// [MISTRAL] SettingsTab registrieren
-		this.addSettingTab(new SettingsTab(this.app, this));
-
-		this.registerEvent(
-			this.app.workspace.on("file-open", (file) => {
-				if (!(file instanceof TFile)) return;
-				if (file.extension !== "md") return;
-				this.pluginData.recordRecentlyOpenedNote(file.path);
-			}),
-		);
-
-		// Create Agent Manager (v2) — constructor is cheap, heavy init deferred to onLayoutReady
-		this.agentManager = new AgentManager(this);
-		// [MISTRAL] Mistral-LLM registrieren
-		this.agentManager.registerLLM("mistral", (apiKey: string, model: string) => {
-			return new MistralLLM(apiKey, model);
-		});
-		createMessenger(this.agentManager);
-		this.registerNotebookNavigatorMenus();
-
-		// Defer ALL heavy initialization to onLayoutReady so the Obsidian workspace
-		// renders immediately. This includes:
-		// - LexicalSearch / VectorStore: IDB opens can take seconds when cold
-		// - SkillsService: filesystem discovery
-		// - AgentManager: chat index loading, provider registration
-		// If a chat view opens before this completes, AgentManager.ensureAgent() handles lazy init.
-		this.app.workspace.onLayoutReady(() => {
-			// Start search/vector store initialization (non-blocking, fire-and-forget)
-			this.lexicalSearchService = LexicalSearchService.startInitialize(this);
-			this.vectorStoreService = VectorStoreService.startInitialize(this);
-
-			// Skills + Agent init (sequential, but non-blocking relative to workspace)
-			void (async () => {
-				try {
-					await this.skillsService.initialize();
-					await this.agentManager.initialize();
-				} catch (e) {
-					Log.error("Deferred initialization failed", e);
-				}
-			})();
-		});
-
-		this.registerEvent(
-			this.app.workspace.on("file-menu", (menu, file) => {
-				if (!(file instanceof TFile)) return;
-
-				menu.addItem((item) =>
-					item
-						.setTitle(this.getAddToChatMenuLabel(1))
-						.setIcon("message-square-plus")
-						.onClick(async () => {
-							try {
-								await this.queueFilesForChatAttachment([file]);
-							} catch (error) {
-								new Notice(
-									`Failed to add file to chat: ${error instanceof Error ? error.message : String(error)}`,
-								);
-							}
-						}),
-				);
-			}),
-		);
-
-		this.registerEvent(
-			this.app.workspace.on("files-menu", (menu, files) => {
-				const selectedFiles = files.filter((file): file is TFile => file instanceof TFile);
-				if (selectedFiles.length === 0) return;
-
-				menu.addItem((item) =>
-					item
-						.setTitle(this.getAddToChatMenuLabel(selectedFiles.length))
-						.setIcon("message-square-plus")
-						.onClick(async () => {
-							try {
-								await this.queueFilesForChatAttachment(selectedFiles);
-							} catch (error) {
-								new Notice(
-									`Failed to add files to chat: ${error instanceof Error ? error.message : String(error)}`,
-								);
-							}
-						}),
-				);
-			}),
-		);
-
-		// Initialize Pending Changes Store for write tool staging
-		this.pendingChangesStore = new PendingChangesStore(this);
-		initPendingChangesStore(this.pendingChangesStore);
-		await this.pendingChangesStore.load();
-
-		// Register inline diff decorations in the editor
-		this.registerEditorExtension(inlineDiffPlugin);
-
-		// Register selection highlight persistence (dim accent marks for captured selections)
-		this.registerEditorExtension(selectionHighlightPlugin);
-
-		// Register reading view diff highlighting
-		this.registerMarkdownPostProcessor(createReadingViewDiffPostProcessor(this));
-
-		// Re-render reading views when pending changes update
-		const refreshReadingViews = () => {
-			for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-				const view = leaf.view;
-				if (view instanceof MarkdownView) {
-					view.previewMode?.rerender(true);
-				}
-			}
-		};
-		document.addEventListener("s2b-pending-changes-updated", refreshReadingViews);
-		this.register(() => document.removeEventListener("s2b-pending-changes-updated", refreshReadingViews));
-	}
-
-	// [MISTRAL] Methode zum Speichern der Einstellungen
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-
-	onunload() {
-		Log.info("Unloading plugin");
-		if (this.lexicalSearchService) void this.lexicalSearchService.cleanup();
-		if (this.vectorStoreService) void this.vectorStoreService.cleanup();
-		if (this.agentManager) void this.agentManager.cleanup();
-		if (this.pendingChangesStore) this.pendingChangesStore.cleanup();
-		terminateClusteringWorker();
-	}
-
-	async createNewChat() {
-		return this.agentManager.createNewChat();
-	}
-
-	async openLatestChat() {
-		return this.agentManager.openLatestChat();
-	}
-
-	async activateSmartGraphView() {
-		const { workspace } = this.app;
-
-		// Check if the view is already open
-		let leaf = workspace.getLeavesOfType(VIEW_TYPE_SMART_GRAPH)[0];
-
-		if (!leaf) {
-			// Open in a new tab in the main editor area
-			const newLeaf = workspace.getLeaf("tab");
-			await newLeaf.setViewState({
-				type: VIEW_TYPE_SMART_GRAPH,
-				active: true,
-			});
-			leaf = newLeaf;
-		}
-
-		workspace.revealLeaf(leaf);
-	}
+  async activateSmartGraphView() {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(VIEW_TYPE_SMART_GRAPH)[0];
+    if (!leaf) {
+      const newLeaf = workspace.getLeaf("tab");
+      await newLeaf.setViewState({
+        type: VIEW_TYPE_SMART_GRAPH,
+        active: true,
+      });
+      leaf = newLeaf;
+    }
+    workspace.revealLeaf(leaf);
+  }
 }

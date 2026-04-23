@@ -1,6 +1,5 @@
 <script lang="ts">
   import { getPlugin } from "../../stores/state.svelte";
-  import { Setting } from "obsidian";
 
   // Plugin-Instanz abrufen
   const plugin = getPlugin();
