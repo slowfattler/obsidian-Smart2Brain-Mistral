@@ -1,98 +1,160 @@
-<div align="center">
+# Obsidian Mistral Assistant
 
-![2-05](https://github.com/your-papa/obsidian-Smart2Brain/assets/48623649/0f9671ab-c39a-46f1-b3e8-bc045b578965)
+An Obsidian plugin that integrates Mistral AI models into your vault, allowing you to chat with your notes using Retrieval-Augmented Generation (RAG) or use Mistral's chat models directly.
 
-</div>
+## Features
 
-# Your Smart Second Brain
+- **Chat with Mistral Models**: Direct integration with Mistral AI's API
+- **RAG Support**: Search and retrieve relevant information from your notes
+- **Multiple Models**: Support for various Mistral models (mistral-tiny, mistral-small, mixtral-8x7b, etc.)
+- **Embedding Support**: Use Mistral's embedding models for vector search
+- **Chat Interface**: Clean, modern chat UI with message history
+- **Streaming Responses**: Real-time streaming of AI responses
+- **Customizable Settings**: Configure API keys, models, temperature, and RAG parameters
 
-Your Smart Second Brain is a **free** and **open-source** Obsidian plugin to improve your overall knowledge management.
-It serves as your **personal assistant**, powered by large language models like ChatGPT or Llama2.
-It can directly access and process your notes, eliminating the need for manual prompt editing and it can operate **completely offline**, ensuring your data remains private and secure.
+## Installation
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/your-papa/obsidian-Smart2Brain/assets/48623649/3e9cb3bc-ea57-4afc-b616-9c9360e39232">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/your-papa/obsidian-Smart2Brain/assets/48623649/9948671a-ebc4-4315-b376-0918c6f7f4f8">
-  <img alt="S2B Chat" src="https://github.com/your-papa/obsidian-Smart2Brain/assets/48623649/9948671a-ebc4-4315-b376-0918c6f7f4f8">
-</picture>
+### From Source
 
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/your-username/obsidian-mistral-assistant.git
+   cd obsidian-mistral-assistant
+   ```
 
-# 🌟 Features
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-**📝 Chat with your Notes**
+3. Build the plugin:
+   ```bash
+   npm run build
+   ```
 
-- **RAG pipeline:** All your notes will be embedded into vectors and then retrieved based on the similarity to your query in order to generate an answer based on the retrieved notes
-- **Get reference links to notes:** Because the answers are generated based on your retrieved notes we can trace where the information comes from and reference the origin of the knowledge in the answers as Obsidian links
-- **Chat with LLM:** You can disable the function to answer queries based on your notes and then all the answers generated are based on the chosen LLM’s training knowledge
-- **Save chats:** You can save your chats and continue the conversation at a later time
-- **Different chat views:** You can choose between two chat views: the ‘comfy’ and the ‘compact’ view
+4. Copy the `main.js`, `styles.css`, and `manifest.json` files to your Obsidian vault's plugins folder:
+   ```
+   .obsidian/plugins/obsidian-mistral-assistant/
+   ```
 
-**🤖 Choose ANY preferred Large Language Model (LLM)**
+5. Enable the plugin in Obsidian's Settings → Community plugins
 
-- **[Ollama](https://ollama.com/) to integrate LLMs:** Ollama is a tool to run LLMs locally. Its usage is similar to Docker, but it's specifically designed for LLMs. You can use it as an interactive shell, through its REST API, or using it from a Python library.
-- **Quickly switch between LLMs:** Comfortably change between different LLMs for different purposes, for example changing from one for scientific writing to one for persuasive writing.
-- **Use ChatGPT:** Although, our focus lies on a privacy-focused AI Assistant you can still leverage OpenAI’s models and their advanced capabilities.
+### Manual Installation
 
-# ⚠️ Limitations
+1. Download the latest release from GitHub
+2. Extract the files to your vault's plugins folder
+3. Enable the plugin in Obsidian
 
-- **Performance depends on the chosen LLM:** As LLMs are trained for different tasks, LLMs perform better or worse in embedding notes or generating answers. You can go with our recommendations or find your own best fit.
-- **Quality depends on knowledge structure and organization:** The response improves when you have a clear structure and do not mix unrelated information or connect unrelated notes. Therefore, we recommend a well-structured vault and notes.
-- **AI Assistant might generate incorrect or irrelevant answers:** Due to a lack of relevant notes or limitations of AI understanding the AI Assistant might generate unsatisfying answers. In those cases, we recommend rephrasing your query or describing the context in more detail
+## Usage
 
-# 🔧 Getting started
-> [!NOTE]  
-> If you use **Obsidian Sync** the vector store binaries might take up a lot of space due to the version history.  
-> Exclude the `.obsidian/plugins/smart-second-brain/vectorstores` folder in the Obsidian Sync settings to avoid this.
+### Setting Up API Access
 
-Follow the onboarding instructions provided on initial plugin startup in Obsidian.
+1. Get your Mistral API key from [console.mistral.ai](https://console.mistral.ai/)
+2. Open Obsidian Settings → Mistral Assistant
+3. Enter your API key
+4. (Optional) Set a custom base URL if you're using a self-hosted instance
+5. Click "Test Connection" to verify your API key works
+6. Click "Fetch Models" to load available models
+7. Save your settings
 
-# ⚙️ Under the hood
+### Using the Chat
 
-Check out our [Architecture Wiki](https://github.com/your-papa/obsidian-Smart2Brain/wiki) page.
+- **Open Chat**: Click the ribbon icon or use the command palette (Ctrl/Cmd + P) and search for "Open Mistral Chat"
+- **Send Message**: Type your question and press Enter or click Send
+- **Index Notes**: Click "Index Notes" to re-index your vault for RAG
+- **Enable RAG**: In settings, enable RAG to search your notes for answers
 
-# 🎯 Roadmap
+### Available Models
 
-- Support Gemini and Claude models and integrate KoboldCpp
-- Similar note connections view
-- Chat Threads
-- Hybrid Vector Search
-- Predictive Note Placement
-- Agent with Obsidian tooling
-- Multimodality
+The plugin supports these Mistral models:
+- Chat: `mistral-tiny`, `mistral-small`, `mistral-medium`, `mistral-large`, `mixtral-8x7b`, `mixtral-8x22b`
+- Embeddings: `mistral-embed`, `mistral-embedding`
 
-# 🧑‍💻 About us
+## Configuration
 
-We initially made this plugin as part of a university project, which is now complete. However, we are still fully committed to developing and improving the assistant in our spare time.
-This and the [papa-ts](https://github.com/your-papa/papa-ts) (backend) repo serve as an experimental playground, allowing us to explore state-of-the-art AI topics further and as a tool to enrich the obsidian experience we’re so passionate about.
-If you have any suggestions or wish to contribute, we would greatly appreciate it.
+### Settings Options
 
-# 📢 You want to support?
+| Setting | Description | Default |
+|---------|-------------|---------|
+| API Key | Your Mistral AI API key | - |
+| Base URL | API endpoint (optional) | https://api.mistral.ai |
+| Chat Model | Model for chat completion | mistral-tiny |
+| Embedding Model | Model for embeddings | mistral-embed |
+| Temperature | Creativity level (0-2) | 0.7 |
+| Enable RAG | Search notes for answers | true |
+| Chunk Size | Document chunk size (tokens) | 1000 |
+| Chunk Overlap | Token overlap between chunks | 200 |
 
-- Report issues or open a feature request [here](https://github.com/your-papa/obsidian-Smart2Brain/issues/new/choose)
-- Open a PR for code contributions (Development setup instructions TBD)
+## Architecture
 
+This plugin follows the Smart2Brain architecture pattern with:
 
-# ❓ FAQ
+- **Provider System**: Modular design for different AI providers (currently only Mistral)
+- **RAG Pipeline**: Document indexing → Vector storage → Similarity search → Answer generation
+- **Type Safety**: Full TypeScript support with Zod validation for settings
 
-Don't hesitate to ask your question in the [Q&A](https://github.com/your-papa/obsidian-Smart2Brain/discussions/categories/q-a)
+### Key Files
 
-## Are any queries sent to the cloud?
+- `src/main.ts` - Main plugin class with all core functionality
+- `src/providers/mistral.ts` - Mistral AI provider implementation
+- `src/providers/index.ts` - Provider registry
+- `src/views/ChatView.ts` - Chat interface
+- `src/views/SettingsTab.ts` - Settings UI
+- `src/settings.ts` - Settings schema and validation
 
-The queries are sent to the cloud only if you choose to use OpenAI's models. You can also choose Ollama to run your models locally. Therefore, your data will never be sent to any cloud services and stay on your machine.
-    
-## How does it differ from the SmartConnections plugin?
-Our plugin is quite similar to Smart Connections. However, we improve it based on our experience and the research we do for the university.
-    
-For now, these are the main differences:
-- We are completely open-source
-- We support Ollama/local models without needing a license
-- We place more value on UI/UX
-- We use a different tech stack leveraging Langchain and Orama as our vector store
-- Under the hood, our RAG pipeline uses other techniques to process your notes like hierarchical tree summarization
+## Development
 
-## What models do you recommend?
-OpenAI's models are still the most capable. Especially "GPT-4" and "text-embedding-3-large". The best working local embedding modal we tested so far would be "mxbai-embed-large".
+### Project Structure
 
-## Does it support multi-language vaults?
+```
+obsidian-mistral-assistant/
+├── src/
+│   ├── main.ts              # Plugin main class
+│   ├── settings.ts          # Settings schema
+│   ├── providers/
+│   │   ├── index.ts         # Provider registry
+│   │   └── mistral.ts       # Mistral provider
+│   ├── types/
+│   │   └── provider/        # Provider type definitions
+│   └── views/
+│       ├── ChatView.ts      # Chat interface
+│       └── SettingsTab.ts   # Settings UI
+├── styles.css              # Plugin styles
+├── manifest.json            # Plugin metadata
+├── package.json            # Dependencies
+├── tsconfig.json           # TypeScript config
+└── vite.config.ts          # Vite build config
+```
 
-It’s supported, although the response quality may vary depending on which prompt language is used internally (we will support more translations in the future) and which models you use. It should work best with OpenAI's "text-embedding-large-3" model.
+### Building
+
+```bash
+# Development build (watches for changes)
+npm run dev
+
+# Production build
+npm run build
+
+# Type checking
+npm run check
+
+# Format code
+npm run format
+```
+
+## Compatibility
+
+- **Obsidian**: >= 1.5.0
+- **Platform**: Desktop (may work on mobile with limitations)
+
+## License
+
+MIT
+
+## Credits
+
+This plugin is inspired by [Smart2Brain](https://github.com/your-papa/obsidian-Smart2Brain) and uses similar architectural patterns.
+
+## Support
+
+If you encounter any issues or have feature requests, please open an issue on GitHub.

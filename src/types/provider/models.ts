@@ -1,51 +1,35 @@
 /**
  * Model Configuration Types
- *
- * Types for configuring chat and embedding models.
  */
 
 /**
- * Configuration for a chat model.
- * Stored in data.json under provider.chatModels[modelId]
- *
- * These values are passed to LangChain when creating the model instance.
- * LangChain may ignore unsupported options (e.g., temperature on reasoning models).
+ * Configuration options for chat models
  */
 export interface ChatModelConfig {
-	/**
-	 * Sampling temperature (0-2).
-	 * Optional - some models (o1, o3, gpt-5) don't support temperature.
-	 * If not set, LangChain uses its default.
-	 */
 	temperature?: number;
-
-	/**
-	 * Maximum context window in tokens.
-	 * REQUIRED - used by LangChain's trimMessages() for context management.
-	 * Also used by our UI to show context usage.
-	 */
-	contextWindow: number;
-
-	/**
-	 * Whether the model supports vision (image input).
-	 * Populated from provider metadata (OpenRouter, Ollama, models.dev).
-	 * Used at runtime to determine if images can be sent to the model.
-	 */
-	supportsVision?: boolean;
+	topP?: number;
+	maxTokens?: number;
+	stop?: string[];
+	presencePenalty?: number;
+	frequencyPenalty?: number;
 }
 
 /**
- * Configuration for an embedding model.
- * Stored in data.json under provider.embedModels[modelId]
- *
- * NOTE: These values are used by our retrieval system, NOT passed to LangChain.
- * LangChain embedding models don't typically need configuration beyond the model name.
+ * Configuration options for embedding models
  */
-export interface EmbedModelConfig {
-	/**
-	 * Similarity threshold for retrieval (0-1).
-	 * Used by our retrieval system to filter results.
-	 * A higher value means only more similar results are returned.
-	 */
-	similarityThreshold: number;
+export interface EmbeddingModelConfig {
+	// Embedding-specific options can be added here
+}
+
+/**
+ * Model metadata for display and filtering
+ */
+export interface ModelMetadata {
+	id: string;
+	name: string;
+	description?: string;
+	contextWindow?: number;
+	maxTokens?: number;
+	provider?: string;
+	createdAt?: string;
 }

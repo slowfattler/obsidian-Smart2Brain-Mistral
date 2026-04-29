@@ -1,16 +1,12 @@
 /**
  * Provider Registry
- *
+ * 
  * This module provides lookup helpers for code-defined provider templates and
  * persisted provider instances created from those templates.
  */
 
 import type { BaseProviderDefinition, ProviderInstanceMeta, ProviderTemplateId } from "../types/provider/index";
-import { createOpenAICompatibleProvider } from "./openai-compatible";
-import { anthropicProvider } from "./anthropic";
-import { ollamaProvider } from "./ollama";
-import { openrouterProvider } from "./openrouter";
-import { openAICodexProvider } from "./openai-codex";
+import { mistralProvider } from "./mistral";
 
 export interface ProviderTemplateDefinition {
 	id: ProviderTemplateId;
@@ -18,67 +14,36 @@ export interface ProviderTemplateDefinition {
 	description: string;
 }
 
+/**
+ * Available provider templates
+ */
 export const PROVIDER_TEMPLATES: readonly ProviderTemplateDefinition[] = [
 	{
-		id: "openai-compatible",
-		displayName: "OpenAI-Compatible",
-		description: "Flexible OpenAI-style provider for OpenAI and compatible endpoints.",
-	},
-	{
-		id: "openai-codex",
-		displayName: "OpenAI Codex",
-		description: "ChatGPT/Codex sign-in flow for Codex-backed OpenAI models.",
-	},
-	{
-		id: "anthropic",
-		displayName: "Anthropic",
-		description: "Claude models via Anthropic's API.",
-	},
-	{
-		id: "ollama",
-		displayName: "Ollama",
-		description: "Local Ollama models over the Ollama API.",
-	},
-	{
-		id: "openrouter",
-		displayName: "OpenRouter",
-		description: "OpenRouter account and model catalog.",
+		id: "mistral",
+		displayName: "Mistral AI",
+		description: "Mistral AI models via API with support for chat and embeddings.",
 	},
 ] as const;
 
+/**
+ * Get a provider template by ID
+ */
 export function getProviderTemplate(templateId: ProviderTemplateId): ProviderTemplateDefinition | undefined {
 	return PROVIDER_TEMPLATES.find((template) => template.id === templateId);
 }
 
+/**
+ * Create a provider definition from a template and instance metadata
+ */
 function createTemplateDefinition(
 	instanceId: string,
 	templateId: ProviderTemplateId,
 	meta: ProviderInstanceMeta,
 ): BaseProviderDefinition | undefined {
 	switch (templateId) {
-		case "openai-compatible":
-			return createOpenAICompatibleProvider({
-				id: instanceId,
-				displayName: meta.displayName,
-				defaultBaseUrl: "https://api.openai.com",
-			});
-		case "openai-codex":
-			return openAICodexProvider(instanceId, meta.displayName);
-		case "anthropic":
+		case "mistral":
 			return {
-				...anthropicProvider,
-				id: instanceId,
-				displayName: meta.displayName,
-			};
-		case "ollama":
-			return {
-				...ollamaProvider,
-				id: instanceId,
-				displayName: meta.displayName,
-			};
-		case "openrouter":
-			return {
-				...openrouterProvider,
+				...mistralProvider,
 				id: instanceId,
 				displayName: meta.displayName,
 			};
@@ -87,6 +52,9 @@ function createTemplateDefinition(
 	}
 }
 
+/**
+ * Get a full provider definition from instance metadata
+ */
 export function getProviderDefinition(
 	id: string,
 	providerMeta: Record<string, ProviderInstanceMeta> = {},
@@ -98,45 +66,30 @@ export function getProviderDefinition(
 	return createTemplateDefinition(id, meta.templateId, meta);
 }
 
+/**
+ * Get all available provider templates
+ */
 export function getAllProviderTemplates(): readonly ProviderTemplateDefinition[] {
 	return PROVIDER_TEMPLATES;
 }
 
-export {
-	ProviderRegistryError,
-	ProviderAuthError,
-	ProviderEndpointError,
-	ModelNotFoundError,
-	ProviderNotFoundError,
-	ProviderImportError,
-} from "./errors";
-
-export { ProviderRegistry } from "./registry";
-
-export { createOpenAICompatibleProvider } from "./openai-compatible";
-
+// Re-export types
 export type {
 	AuthObject,
 	AuthObjectKey,
-	CodexSession,
-	AuthFieldDefinition,
-	AuthValidationResult,
 	BaseProviderDefinition,
-	EmbeddingProviderDefinition,
 	ChatModelConfig,
-	EmbedModelConfig,
+	EmbeddingProviderDefinition,
+	EmbeddingModelConfig,
 	LogoProps,
+	ModelMetadata,
 	ProviderAuthConfig,
 	ProviderSetupInstructions,
-	RequiredAuthField,
-	OptionalAuthField,
-	OpenAIAuthMode,
-	ProviderInstanceMeta,
 	ProviderTemplateId,
+	ProviderInstanceMeta,
 } from "../types/provider/index";
 
 export { isEmbeddingProvider } from "../types/provider/index";
 
-export { anthropicProvider } from "./anthropic";
-export { ollamaProvider } from "./ollama";
-export { openrouterProvider } from "./openrouter";
+// Re-export the mistral provider for direct use
+export { mistralProvider };

@@ -1,297 +1,540 @@
-import { MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
-import "./lib/i18n";
-import { Logger as Log } from "./utils/logging";
-import "./styles.css";
-import { AgentManager } from "./agent/AgentManager";
-import { inlineDiffPlugin } from "./editor/inlineDiffExtension";
-import { selectionHighlightPlugin } from "./editor/selectionHighlightExtension";
-import { createReadingViewDiffPostProcessor } from "./editor/readingViewDiffProcessor";
-import { terminateWorker as terminateClusteringWorker } from "./utils/computeWorkerManager";
-import { SearchModal } from "./components/modal/SearchModal";
-import { getQueryClient } from "./lib/query";
-import { SkillsService } from "./skills";
-import { createMessenger, getMessenger } from "./stores/chatStore.svelte";
-import { type PluginDataStore, createData, getData } from "./stores/dataStore.svelte";
-import { PendingChangesStore, initPendingChangesStore } from "./stores/pendingChangesStore.svelte";
-import { setPlugin } from "./stores/state.svelte";
-import { LexicalSearchService } from "./search/LexicalSearchService";
-import { ChatView, VIEW_TYPE_CHAT } from "./views/chat/Chat";
-import { SmartGraphView, VIEW_TYPE_SMART_GRAPH } from "./views/smart-graph/SmartGraphView";
-import SettingsTab from "./views/settings/Settings";
-import { VectorStoreService } from "./vectorstore";
-import { MistralLLM } from "./llm/mistral";
+import { Plugin, WorkspaceLeaf, TFile, Notice, requestUrl } from "obsidian";
+import { v4 as uuidv4 } from "uuid";
+import { mistralProvider, SimpleVectorStore, PersistentVectorStore, splitTextIntoChunks, EmbeddingModel } from "./providers/mistral";
+import type { BaseProviderDefinition } from "./providers/index";
+import { DEFAULT_SETTINGS, validateSettings, type MistralAssistantSettings } from "./settings";
+import { ChatView, VIEW_TYPE_CHAT } from "./views/ChatView";
+import { SettingsTab } from "./views/SettingsTab";
 
-// [MISTRAL] PluginSettings-Interface und Defaults
-interface PluginSettings {
-  mistralApiKey: string;
-  useMistral: boolean;
-  mistralModel: string;
+/**
+ * Document type for RAG
+ */
+interface RAGDocument {
+	pageContent: string;
+	metadata: Record<string, unknown>;
 }
 
-const DEFAULT_SETTINGS: PluginSettings = {
-  mistralApiKey: "",
-  useMistral: false,
-  mistralModel: "mistral-tiny",
-};
+/**
+ * Main plugin class
+ */
+export default class MistralAssistantPlugin extends Plugin {
+	settings: MistralAssistantSettings = DEFAULT_SETTINGS;
+	vectorStore: SimpleVectorStore | PersistentVectorStore | null = null;
+	activeProvider: BaseProviderDefinition | null = null;
+	// Indexing status for UI feedback
+	indexingProgress: { current: number; total: number } | null = null;
+	isIndexing: boolean = false;
 
-const SUPPORTED_CHAT_ATTACHMENT_EXTENSIONS = new Set([
-  "txt", "md", "csv", "json", "png", "jpg", "jpeg", "gif", "webp", "pdf",
-]);
+	/**
+	 * Load settings from plugin data
+	 */
+	async loadSettings(): Promise<void> {
+		const data = await this.loadData();
+		this.settings = validateSettings({
+			...DEFAULT_SETTINGS,
+			...(data as Partial<MistralAssistantSettings>),
+		});
+	}
 
-export default class SecondBrainPlugin extends Plugin {
-  agentManager!: AgentManager;
-  skillsService!: SkillsService;
-  lexicalSearchService!: LexicalSearchService;
-  vectorStoreService!: VectorStoreService;
-  pendingChangesStore!: PendingChangesStore;
-  queryClient = getQueryClient();
-  pluginData!: PluginDataStore;
-  settings: PluginSettings = { ...DEFAULT_SETTINGS }; // [FIX] Defaults setzen
+	/**
+	 * Save settings to plugin data
+	 */
+	async saveSettings(): Promise<void> {
+		await this.saveData(this.settings);
+	}
 
-  private getAddToChatMenuLabel(selectedCount: number): string {
-    if (selectedCount <= 1) {
-      return "Add to Chat";
-    }
-    return `Add ${selectedCount} files to Chat`;
-  }
+	/**
+	 * Get the embedding model from settings
+	 */
+	getEmbeddingModel(): EmbeddingModel | null {
+		if (!this.getApiKey()) {
+			return null;
+		}
 
-  // ... (alle privaten Methoden wie registerNotebookNavigatorMenus, getSupportedFiles, queueFilesForChatAttachment bleiben unverändert) ...
+		const embeddingModelId = this.settings.embeddingModel || "mistral-embed";
+		const auth = {
+			apiKey: this.getApiKey(),
+			baseUrl: this.getBaseUrl(),
+		};
 
-  async onload() {
-    // [FIX] NUR die absolut notwendigen Registrierungen hier
-    setPlugin(this);
+		// Create embedding instance using the mistral provider
+		const embeddingInstance = mistralProvider.createEmbeddingInstance(auth, embeddingModelId);
+		
+		return {
+			embedQuery: embeddingInstance.embedQuery.bind(embeddingInstance),
+			embedDocuments: embeddingInstance.embedDocuments.bind(embeddingInstance),
+		};
+	}
 
-    // [FIX] ALLE Initialisierungen in onLayoutReady verschieben
-    this.app.workspace.onLayoutReady(async () => {
-      try {
-        // [FIX] Settings sicher laden
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	/**
+	 * Get the vector store file path from settings
+	 */
+	getVectorStorePath(): string {
+		return this.settings.vectorStorePath || ".obsidian/plugins/obsidian-mistral-assistant/vectorstore.json";
+	}
 
-        // [FIX] PluginData sicher laden
-        this.pluginData = await createData(this);
+	/**
+	 * Initialize the vector store with embedding model and load from file
+	 */
+	async initVectorStore(): Promise<void> {
+		try {
+			const embeddingModel = this.getEmbeddingModel();
+			const vectorStorePath = this.getVectorStorePath();
+			
+			// Create persistent vector store
+			this.vectorStore = new PersistentVectorStore(embeddingModel || undefined, this.app, vectorStorePath);
+			
+			if (embeddingModel) {
+				// Set the embedding model on the vector store
+				(this.vectorStore as PersistentVectorStore).setEmbeddingModel(embeddingModel);
+			}
+			
+			// Load existing data from file
+			try {
+				await (this.vectorStore as PersistentVectorStore).load();
+				console.log(`Vector store initialized. Loaded ${this.vectorStore.count} existing documents.`);
+			} catch (loadError) {
+				console.warn("Could not load existing vector store:", loadError);
+			}
+			
+		} catch (error) {
+			console.error("Failed to initialize vector store:", error);
+			// Fallback to in-memory store
+			this.vectorStore = new SimpleVectorStore();
+			new Notice(`Vector store uses in-memory mode: ${error}`);
+		}
+	}
 
-        // [FIX] SkillsService initialisieren
-        this.skillsService = new SkillsService(this);
+	/**
+	 * Get the API key from settings
+	 */
+	getApiKey(): string | null {
+		if (this.settings.activeProviderId && this.settings.providerInstances[this.settings.activeProviderId]) {
+			const provider = this.settings.providerInstances[this.settings.activeProviderId];
+			return (provider.auth?.apiKey as string) || null;
+		}
+		// Fallback: check if there's any provider with apiKey
+		for (const provider of Object.values(this.settings.providerInstances)) {
+			if (provider.auth?.apiKey) {
+				return provider.auth.apiKey as string;
+			}
+		}
+		return null;
+	}
 
-        // [FIX] AgentManager erstellen
-        this.agentManager = new AgentManager(this);
-        createMessenger(this.agentManager);
+	/**
+	 * Get the base URL from settings
+	 */
+	getBaseUrl(): string {
+		if (this.settings.activeProviderId && this.settings.providerInstances[this.settings.activeProviderId]) {
+			const provider = this.settings.providerInstances[this.settings.activeProviderId];
+			return (provider.auth?.baseUrl as string) || "https://api.mistral.ai";
+		}
+		// Fallback: check if there's any provider with baseUrl
+		for (const provider of Object.values(this.settings.providerInstances)) {
+			if (provider.auth?.baseUrl) {
+				return provider.auth.baseUrl as string;
+			}
+		}
+		return "https://api.mistral.ai";
+	}
 
-        // [FIX] Alle View-Registrierungen
-        this.registerHoverLinkSource(VIEW_TYPE_CHAT, {
-          display: "Smart2Brain Chat",
-          defaultMod: false,
-        });
-        this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
-        this.registerExtensions(["chat"], VIEW_TYPE_CHAT);
+	/**
+	 * Set indexing progress for UI
+	 */
+	setIndexingProgress(current: number, total: number): void {
+		this.indexingProgress = { current, total };
+		// Trigger view refresh if needed
+		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+		for (const leaf of leaves) {
+			const view = leaf.view as any;
+			if (view && view.onIndexingProgressUpdate) {
+				view.onIndexingProgressUpdate();
+			}
+		}
+	}
 
-        this.registerHoverLinkSource(VIEW_TYPE_SMART_GRAPH, {
-          display: "Smart Graph",
-          defaultMod: true,
-        });
-        this.registerView(VIEW_TYPE_SMART_GRAPH, (leaf) => new SmartGraphView(leaf, this));
+	/**
+	 * Clear indexing progress
+	 */
+	clearIndexingProgress(): void {
+		this.indexingProgress = null;
+		this.isIndexing = false;
+		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+		for (const leaf of leaves) {
+			const view = leaf.view as any;
+			if (view && view.onIndexingProgressUpdate) {
+				view.onIndexingProgressUpdate();
+			}
+		}
+	}
 
-        // [FIX] File Open Interception
-        const origOpenFile = WorkspaceLeaf.prototype.openFile;
-        const app = this.app;
-        WorkspaceLeaf.prototype.openFile = async function (file, openState) {
-          if (file.extension === "chat") {
-            const location = getData().chatOpenLocation;
-            if (location === "left" || location === "right") {
-              const ws = app.workspace;
-              const root = this.getRoot();
-              if (root !== ws.leftSplit && root !== ws.rightSplit) {
-                const targetSplit = location === "left" ? ws.leftSplit : ws.rightSplit;
-                const sidebarLeaf = ws.getLeavesOfType(VIEW_TYPE_CHAT).find((l: WorkspaceLeaf) => l.getRoot() === targetSplit) ??
-                  (location === "left" ? ws.getLeftLeaf(false) : ws.getRightLeaf(false));
-                if (sidebarLeaf) {
-                  await origOpenFile.call(sidebarLeaf, file, openState);
-                  ws.revealLeaf(sidebarLeaf);
-                  return;
-                }
-              }
-            }
-            return origOpenFile.call(this, file, openState);
-          }
-          return origOpenFile.call(this, file, openState);
-        };
-        this.register(() => {
-          WorkspaceLeaf.prototype.openFile = origOpenFile;
-        });
+	/**
+	 * Get all documents from the vault and index them
+	 */
+	async indexVault(): Promise<void> {
+		if (!this.settings.enableRAG) {
+			return;
+		}
 
-        // [FIX] Ribbon Icons und Commands
-        this.addRibbonIcon("message-square", "New Chat", () => this.createNewChat());
-        this.addRibbonIcon("git-fork", "Smart Graph", () => this.activateSmartGraphView());
+		const files = this.app.vault.getMarkdownFiles();
+		const docs: RAGDocument[] = [];
 
-        this.addCommand({
-          id: "open-chat",
-          name: "Open Chat",
-          icon: "message-square",
-          callback: async () => await this.agentManager.openLatestChat(),
-        });
+		for (const file of files) {
+			try {
+				const content = await this.app.vault.read(file);
+				docs.push({
+					pageContent: content,
+					metadata: {
+						source: file.path,
+						fileName: file.name,
+					},
+				});
+			} catch (error) {
+				console.error(`Failed to read file ${file.path}:`, error);
+			}
+		}
 
-        this.addCommand({
-          id: "new-chat",
-          name: "New Chat",
-          icon: "plus",
-          callback: async () => await this.agentManager.createNewChat(),
-        });
+		if (docs.length === 0) return;
 
-        this.addCommand({
-          id: "search-notes",
-          name: "Search Notes",
-          icon: "search",
-          callback: () => new SearchModal(this.app).open(),
-        });
+		// Initialize vector store with embedding model if not exists
+		if (!this.vectorStore) {
+			await this.initVectorStore();
+		}
 
-        this.addCommand({
-          id: "open-smart-graph",
-          name: "Open Smart Graph",
-          icon: "git-fork",
-          callback: () => this.activateSmartGraphView(),
-        });
+		// Clear existing documents before re-indexing
+		if (this.vectorStore) {
+			if (this.vectorStore instanceof PersistentVectorStore) {
+				await (this.vectorStore as PersistentVectorStore).clear();
+			} else {
+				(this.vectorStore as SimpleVectorStore).clear();
+			}
+		}
 
-        this.addCommand({
-          id: "export-chat-as-json",
-          name: "Export current chat as JSON",
-          icon: "file-json",
-          callback: async () => {
-            const threadId = getMessenger()?.session?.id;
-            if (!threadId) {
-              new Notice("No chat is currently open");
-              return;
-            }
-            await this.agentManager.exportChatAsJson(threadId);
-            new Notice("Chat exported as JSON");
-          },
-        });
+		// Split documents into chunks using our simple splitter
+		const chunkSize = this.settings.ragChunkSize || 1000;
+		const overlap = this.settings.ragChunkOverlap || 200;
+		
+		// Mistral free tier rate limits: ~32 requests per minute
+		// SimpleVectorStore batches embeddings in groups of 4 with 8s delay between batches
+		// So each document batch can generate multiple embedding API calls
+		// We add document-level batching with generous delays
+		const docBatchSize = 1; // Process 1 document at a time (most conservative)
+		const delayMs = 15000; // 15 second delay between documents (very safe for free tier)
+		
+		// Set indexing state
+		this.isIndexing = true;
+		this.setIndexingProgress(0, docs.length);
+		
+		let processedDocs = 0;
+		
+		for (let i = 0; i < docs.length; i += docBatchSize) {
+			const batch = docs.slice(i, i + docBatchSize);
+			const chunkedDocs: RAGDocument[] = [];
+			
+			// Collect all chunks from this batch of documents
+			for (const doc of batch) {
+				const chunks = splitTextIntoChunks(doc.pageContent, chunkSize, overlap);
+				
+				for (const chunk of chunks) {
+					chunkedDocs.push({
+						pageContent: chunk,
+						metadata: {
+							...doc.metadata,
+							chunkIndex: chunks.indexOf(chunk),
+							totalChunks: chunks.length,
+						},
+					});
+				}
+			}
+			
+			try {
+				if (this.vectorStore && chunkedDocs.length > 0) {
+					// Add all chunks from this batch and save to file
+					if (this.vectorStore instanceof PersistentVectorStore) {
+						await (this.vectorStore as PersistentVectorStore).addDocumentsAndSave(chunkedDocs);
+					} else {
+						await (this.vectorStore as SimpleVectorStore).addDocuments(chunkedDocs);
+					}
+				}
+				
+				processedDocs += batch.length;
+				this.setIndexingProgress(processedDocs, docs.length);
+				
+				// Delay between batches to avoid rate limiting (429 errors)
+				if (i + docBatchSize < docs.length) {
+					await new Promise(resolve => setTimeout(resolve, delayMs));
+				}
+			} catch (error) {
+				console.error(`Error indexing document batch ${i/docBatchSize}:`, error);
+				// If rate limited, wait extra long and then retry this batch
+				const errorMsg = String(error);
+				if (errorMsg.includes("429") || errorMsg.includes("rate limit") || errorMsg.includes("too many")) {
+					const extendedDelay = delayMs * 4; // 60 seconds
+					console.warn(`⚠️ Rate limited! Waiting ${extendedDelay}ms before retrying...`);
+					// Wait longer and retry THIS batch
+					await new Promise(resolve => setTimeout(resolve, extendedDelay));
+					// Retry the same batch - don't update progress yet
+					i -= docBatchSize; // Go back to retry this batch
+				} else {
+					// Re-throw non-rate-limit errors
+					this.clearIndexingProgress();
+					throw error;
+				}
+			}
+		}
 
-        // [FIX] SettingsTab erst NACH dem Laden der Settings registrieren
-        this.addSettingTab(new SettingsTab(this.app, this));
+		this.clearIndexingProgress();
+	}
 
-        // [FIX] Event Listener registrieren
-        this.registerEvent(
-          this.app.workspace.on("file-open", (file) => {
-            if (!(file instanceof TFile)) return;
-            if (file.extension !== "md") return;
-            this.pluginData.recordRecentlyOpenedNote(file.path);
-          }),
-        );
+	/**
+	 * Search the vector store for similar documents
+	 */
+	async searchSimilar(query: string, k: number = 5): Promise<RAGDocument[]> {
+		if (!this.vectorStore) {
+			return [];
+		}
 
-        this.registerNotebookNavigatorMenus();
+		const results = await this.vectorStore.similaritySearch(query, k);
+		return results as RAGDocument[];
+	}
 
-        // [FIX] LexicalSearch und VectorStore initialisieren
-        this.lexicalSearchService = LexicalSearchService.startInitialize(this);
-        this.vectorStoreService = VectorStoreService.startInitialize(this);
+	/**
+	 * Send a message to the chat model
+	 */
+	async sendMessage(message: string, context?: RAGDocument[]): Promise<string> {
+		const apiKey = this.getApiKey();
+		const baseUrl = this.getBaseUrl();
+		const model = this.settings.chatModel || "mistral-tiny";
+		const temperature = this.settings.defaultTemperature || 0.7;
 
-        // [FIX] Skills + Agent init
-        await this.skillsService.initialize();
-        await this.agentManager.initialize();
+		if (!apiKey) {
+			throw new Error("No API key configured");
+		}
 
-        // [FIX] PendingChangesStore initialisieren
-        this.pendingChangesStore = new PendingChangesStore(this);
-        initPendingChangesStore(this.pendingChangesStore);
-        await this.pendingChangesStore.load();
+		// If we have context from RAG, build the prompt
+		let prompt = message;
+		if (context && context.length > 0 && this.settings.enableRAG) {
+			const contextText = context
+				.map((doc) => `--- Document: ${doc.metadata.source || "unknown"} ---\n${doc.pageContent}`)
+				.join("\n\n");
+			prompt = `Context from your notes:\n${contextText}\n\nUser question: ${message}`;
+		}
 
-        // [FIX] Editor Extensions registrieren
-        this.registerEditorExtension(inlineDiffPlugin);
-        this.registerEditorExtension(selectionHighlightPlugin);
-        this.registerMarkdownPostProcessor(createReadingViewDiffPostProcessor(this));
+		try {
+			const response = await requestUrl({
+				url: `${baseUrl}/v1/chat/completions`,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Authorization": `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({
+					model,
+					messages: [
+						{ role: "user", content: prompt }
+					],
+					temperature,
+					max_tokens: 2000,
+				}),
+			});
 
-        // [FIX] Reading View Refresh
-        const refreshReadingViews = () => {
-          for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-            const view = leaf.view;
-            if (view instanceof MarkdownView) {
-              view.previewMode?.rerender(true);
-            }
-          }
-        };
-        document.addEventListener("s2b-pending-changes-updated", refreshReadingViews);
-        this.register(() => document.removeEventListener("s2b-pending-changes-updated", refreshReadingViews));
+			const data = JSON.parse(response.text);
+			return data.choices?.[0]?.message?.content || "No response content received";
+		} catch (error) {
+			console.error("Error sending message:", error);
+			throw error;
+		}
+	}
 
-        // [FIX] File Menu Events
-        this.registerEvent(
-          this.app.workspace.on("file-menu", (menu, file) => {
-            if (!(file instanceof TFile)) return;
-            menu.addItem((item) =>
-              item
-                .setTitle(this.getAddToChatMenuLabel(1))
-                .setIcon("message-square-plus")
-                .onClick(async () => {
-                  try {
-                    await this.queueFilesForChatAttachment([file]);
-                  } catch (error) {
-                    new Notice(
-                      `Failed to add file to chat: ${error instanceof Error ? error.message : String(error)}`,
-                    );
-                  }
-                }),
-            );
-          }),
-        );
+	/**
+	 * Generate a streaming response
+	 * Note: Mistral's streaming uses SSE which isn't fully supported by requestUrl.
+	 * For now, we simulate streaming by chunking the response.
+	 */
+	async *streamMessage(message: string, context?: RAGDocument[]): AsyncGenerator<string> {
+		// Generate context if not provided and RAG is enabled
+		let resolvedContext = context;
+		if (!resolvedContext && this.settings.enableRAG && this.vectorStore && this.vectorStore.count > 0) {
+			resolvedContext = await this.searchSimilar(message, 5);
+			console.log(`Found ${resolvedContext.length} relevant chunks for streaming query: ${message}`);
+		}
 
-        this.registerEvent(
-          this.app.workspace.on("files-menu", (menu, files) => {
-            const selectedFiles = files.filter((file): file is TFile => file instanceof TFile);
-            if (selectedFiles.length === 0) return;
-            menu.addItem((item) =>
-              item
-                .setTitle(this.getAddToChatMenuLabel(selectedFiles.length))
-                .setIcon("message-square-plus")
-                .onClick(async () => {
-                  try {
-                    await this.queueFilesForChatAttachment(selectedFiles);
-                  } catch (error) {
-                    new Notice(
-                      `Failed to add files to chat: ${error instanceof Error ? error.message : String(error)}`,
-                    );
-                  }
-                }),
-            );
-          }),
-        );
+		// For now, use non-streaming and yield chunks manually
+		// In the future, implement proper SSE handling
+		const fullResponse = await this.sendMessage(message, resolvedContext);
+		
+		// Simulate streaming by yielding chunks of the response
+		const chunkSize = 10;
+		for (let i = 0; i < fullResponse.length; i += chunkSize) {
+			yield fullResponse.slice(i, i + chunkSize);
+			// Small delay to simulate streaming
+			await new Promise(resolve => setTimeout(resolve, 10));
+		}
+	}
 
-      } catch (e) {
-        Log.error("Initialization failed in onLayoutReady", e);
-        new Notice(`Plugin initialization failed: ${e.message}`);
-      }
-    });
-  }
+	/**
+	 * Handle chat: answer a question using RAG
+	 */
+	async handleChatQuestion(question: string): Promise<string> {
+		// Check if we need to index (no vector store, or vector store is empty, and RAG is enabled)
+		const needsIndexing = this.settings.enableRAG && 
+			(!this.vectorStore || this.vectorStore.count === 0);
+		
+		if (needsIndexing) {
+			new Notice("Notizen werden für RAG indexiert...");
+			
+			// Initialize vector store if not exists
+			if (!this.vectorStore) {
+				await this.initVectorStore();
+			}
+			
+			// Set embedding model on vector store if it exists
+			const embeddingModel = this.getEmbeddingModel();
+			if (embeddingModel && this.vectorStore) {
+				(this.vectorStore as SimpleVectorStore).setEmbeddingModel(embeddingModel);
+			}
+			
+			await this.indexVault();
+		}
 
-  // [MISTRAL] Methode zum Speichern der Einstellungen
-  async saveSettings() {
-    await this.saveData(this.settings);
-  }
+		// Search for relevant context
+		let context: RAGDocument[] = [];
+		if (this.settings.enableRAG && this.vectorStore && this.vectorStore.count > 0) {
+			context = await this.searchSimilar(question, 5);
+			console.log(`Found ${context.length} relevant chunks for query: ${question}`);
+		} else if (this.settings.enableRAG) {
+			// Vector store exists but is empty
+			console.log("Vector store is empty, no RAG context available");
+		}
 
-  onunload() {
-    Log.info("Unloading plugin");
-    if (this.lexicalSearchService) void this.lexicalSearchService.cleanup();
-    if (this.vectorStoreService) void this.vectorStoreService.cleanup();
-    if (this.agentManager) void this.agentManager.cleanup();
-    if (this.pendingChangesStore) this.pendingChangesStore.cleanup();
-    terminateClusteringWorker();
-  }
+		// Generate response
+		try {
+			return await this.sendMessage(question, context);
+		} catch (error) {
+			const errorMsg = String(error);
+			if (errorMsg.includes("429") || errorMsg.includes("rate limit") || errorMsg.includes("too many")) {
+				throw new Error("Rate limit erreicht. Bitte warte einige Minuten und versuche es erneut.");
+			}
+			throw error;
+		}
+	}
 
-  async createNewChat() {
-    return this.agentManager?.createNewChat();
-  }
+	/**
+	 * Create a new chat session
+	 */
+	createChatSession(): { id: string; messages: Array<{ role: "user" | "assistant"; content: string }> } {
+		return {
+			id: uuidv4(),
+			messages: [],
+		};
+	}
 
-  async openLatestChat() {
-    return this.agentManager?.openLatestChat();
-  }
+	/**
+	 * Update plugin state when settings change
+	 */
+	async updateProvider(): Promise<void> {
+		if (this.settings.activeProviderId && this.settings.providerInstances[this.settings.activeProviderId]) {
+			this.activeProvider = mistralProvider;
+		} else {
+			// Check if there's any provider instance
+			if (Object.keys(this.settings.providerInstances).length > 0) {
+				this.activeProvider = mistralProvider;
+			} else {
+				this.activeProvider = null;
+			}
+		}
 
-  async activateSmartGraphView() {
-    const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(VIEW_TYPE_SMART_GRAPH)[0];
-    if (!leaf) {
-      const newLeaf = workspace.getLeaf("tab");
-      await newLeaf.setViewState({
-        type: VIEW_TYPE_SMART_GRAPH,
-        active: true,
-      });
-      leaf = newLeaf;
-    }
-    workspace.revealLeaf(leaf);
-  }
+		// Reinitialize vector store with new settings
+		if (this.settings.enableRAG) {
+			await this.initVectorStore();
+			
+			// If vector store exists, update its embedding model
+			if (this.vectorStore) {
+				const embeddingModel = this.getEmbeddingModel();
+				if (embeddingModel) {
+					(this.vectorStore as SimpleVectorStore).setEmbeddingModel(embeddingModel);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Plugin load
+	 */
+	async onload() {
+		console.log("Loading Mistral Assistant plugin");
+
+		// Load settings
+		await this.loadSettings();
+
+		// Set up provider
+		await this.updateProvider();
+
+		// Register chat view
+		this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
+
+		this.registerExtensions(["mistral-chat"], VIEW_TYPE_CHAT);
+
+		// Register ribbon icon
+		this.addRibbonIcon("message-square", "Mistral Chat", () => {
+			this.activateChatView();
+		});
+
+		// Register command
+		this.addCommand({
+			id: "open-mistral-chat",
+			name: "Open Mistral Chat",
+			callback: () => {
+				this.activateChatView();
+			},
+		});
+
+		// Register settings tab
+		this.addSettingTab(new SettingsTab(this.app, this));
+
+		// Register context menu for adding files to chat
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file) => {
+				if (file instanceof TFile) {
+					menu.addItem((item) => {
+						item.setTitle("Add to Mistral Chat")
+							.setIcon("message-square-plus")
+							.onClick(() => {
+								new Notice(`Added ${file.name} to Mistral Chat`);
+							});
+					});
+				}
+			})
+		);
+
+		console.log("Mistral Assistant plugin loaded");
+	}
+
+	/**
+	 * Activate the chat view
+	 */
+	activateChatView(): void {
+		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+		if (leaves.length > 0) {
+			this.app.workspace.revealLeaf(leaves[0]);
+			return;
+		}
+
+		const leaf = this.app.workspace.getRightLeaf(false);
+		if (leaf) {
+			leaf.setViewState({
+				type: VIEW_TYPE_CHAT,
+				active: true,
+			});
+			this.app.workspace.revealLeaf(leaf);
+		}
+	}
+
+	/**
+	 * Plugin unload
+	 */
+	async onunload() {
+		console.log("Unloading Mistral Assistant plugin");
+	}
 }

@@ -1,0 +1,291 @@
+/* Mistral Assistant Plugin Styles */
+
+.mistral-chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+.mistral-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: var(--background-secondary);
+    border-radius: 4px;
+}
+
+.mistral-chat-message {
+    margin-bottom: 15px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    max-width: 85%;
+    word-wrap: break-word;
+    animation: mistral-fade-in 0.3s ease;
+}
+
+@keyframes mistral-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.mistral-chat-message-user {
+    background-color: var(--background-modifier-active);
+    margin-left: auto;
+    border-bottom-right-radius: 0;
+}
+
+.mistral-chat-message-assistant {
+    background-color: var(--background-primary);
+    margin-right: auto;
+    border-bottom-left-radius: 0;
+    border-left: 3px solid var(--text-muted);
+}
+
+.mistral-chat-message-timestamp {
+    font-size: 0.7em;
+    color: var(--text-muted);
+    margin-top: 5px;
+    display: block;
+}
+
+.mistral-chat-input-container {
+    display: flex;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.mistral-chat-input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background-color: var(--background-secondary);
+    color: var(--text-normal);
+    resize: none;
+    min-height: 40px;
+    max-height: 150px;
+    font-family: var(--font-text);
+}
+
+.mistral-chat-input:focus {
+    outline: none;
+    border-color: var(--text-muted);
+}
+
+.mistral-chat-send-btn {
+    padding: 10px 15px;
+    background-color: var(--text-normal);
+    color: var(--background-primary);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.mistral-chat-send-btn:hover {
+    background-color: var(--text-muted);
+}
+
+.mistral-chat-send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mistral-chat-index-btn {
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    background-color: var(--background-modifier-active);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+
+.mistral-chat-index-btn:hover {
+    background-color: var(--background-modifier-active-hover);
+}
+
+/* Indexing status and spinner */
+.mistral-index-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mistral-index-status {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    display: none;
+}
+
+.mistral-index-spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--text-muted);
+    border-top-color: var(--text-normal);
+    border-radius: 50%;
+    animation: mistral-spin 0.8s linear infinite;
+}
+
+@keyframes mistral-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Button styles */
+.mistral-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background-color: var(--background-secondary);
+    color: var(--text-normal);
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background-color 0.15s ease;
+}
+
+.mistral-btn:hover:not(:disabled) {
+    background-color: var(--background-modifier-active-hover);
+}
+
+.mistral-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.mistral-btn-small {
+    padding: 4px 8px;
+    font-size: 0.8em;
+}
+
+.mistral-btn-primary {
+    background-color: var(--text-normal);
+    color: var(--background-primary);
+    border-color: var(--text-normal);
+}
+
+.mistral-btn-primary:hover:not(:disabled) {
+    background-color: var(--text-muted);
+    border-color: var(--text-muted);
+}
+
+/* Scrollbar styling */
+.mistral-chat-messages::-webkit-scrollbar {
+    width: 8px;
+}
+
+.mistral-chat-messages::-webkit-scrollbar-track {
+    background: var(--background-secondary);
+    border-radius: 4px;
+}
+
+.mistral-chat-messages::-webkit-scrollbar-thumb {
+    background: var(--text-muted);
+    border-radius: 4px;
+}
+
+.mistral-chat-messages::-webkit-scrollbar-thumb:hover {
+    background: var(--text-normal);
+}
+
+/* Empty state */
+.mistral-chat-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    text-align: center;
+    flex-direction: column;
+}
+
+.mistral-chat-empty-icon {
+    font-size: 3em;
+    margin-bottom: 10px;
+    opacity: 0.5;
+}
+
+/* Loading indicator */
+.mistral-chat-loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: var(--text-normal);
+    animation: mistral-spin 1s ease-in-out infinite;
+}
+
+@keyframes mistral-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Code blocks in messages */
+.mistral-chat-message pre {
+    background-color: var(--background-secondary);
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 5px 0;
+    font-family: var(--font-monospace);
+    font-size: 0.9em;
+}
+
+.mistral-chat-message code {
+    font-family: var(--font-monospace);
+    background-color: var(--background-secondary);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+/* Typing indicator */
+.mistral-chat-typing {
+    display: flex;
+    gap: 5px;
+    padding: 10px;
+}
+
+.mistral-chat-typing span {
+    width: 8px;
+    height: 8px;
+    background-color: var(--text-muted);
+    border-radius: 50%;
+    animation: mistral-bounce 1.4s ease-in-out infinite both;
+}
+
+.mistral-chat-typing span:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.mistral-chat-typing span:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.mistral-chat-typing span:nth-child(3) {
+    animation-delay: 0s;
+}
+
+@keyframes mistral-bounce {
+    0%, 80%, 100% {
+        transform: scale(0);
+    }
+    40% {
+        transform: scale(1);
+    }
+}

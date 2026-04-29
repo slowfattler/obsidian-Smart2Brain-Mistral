@@ -1,7 +1,5 @@
 /**
  * Provider Definition Types
- *
- * Types for defining providers (built-in and custom).
  */
 
 import type { EmbeddingsInterface } from "@langchain/core/embeddings";
@@ -11,7 +9,7 @@ import type { AuthObject, ProviderAuthConfig } from "./auth.ts";
 import type { ChatModelConfig } from "./models.ts";
 
 /**
- * Props for provider logo components.
+ * Props for provider logo components
  */
 export interface LogoProps {
 	width?: number;
@@ -20,13 +18,12 @@ export interface LogoProps {
 }
 
 /**
- * Setup instructions for configuring a provider.
+ * Setup instructions for configuring a provider
  */
 export interface ProviderSetupInstructions {
-	/** Step-by-step instructions for setting up the provider. */
+	/** Step-by-step instructions for setting up the provider */
 	steps: string[];
-
-	/** Optional link to an external resource (e.g., API key page). */
+	/** Optional link to external resource (e.g., API key page) */
 	link?: {
 		url: string;
 		text: string;
@@ -34,56 +31,59 @@ export interface ProviderSetupInstructions {
 }
 
 /**
- * Result of validating provider authentication credentials.
+ * Result of validating provider authentication credentials
  */
 export type AuthValidationResult = { valid: true } | { valid: false; error: string };
 
 /**
- * Base interface for all provider definitions.
+ * Template ID for provider types
+ */
+export type ProviderTemplateId = "mistral";
+
+/**
+ * Instance metadata for stored provider instances
+ */
+export interface ProviderInstanceMeta {
+	templateId: ProviderTemplateId;
+	displayName: string;
+}
+
+/**
+ * Base interface for all provider definitions
  */
 export interface BaseProviderDefinition {
-	/** Unique identifier for this provider. */
+	/** Unique identifier for this provider */
 	id: string;
-
-	/** Human-readable name for the provider. */
+	/** Human-readable name for the provider */
 	displayName: string;
-
-	/** Optional logo component for displaying the provider's icon. */
+	/** Optional logo component for displaying the provider's icon */
 	logo?: Component<LogoProps>;
-
-	/** Instructions for setting up this provider. */
+	/** Instructions for setting up this provider */
 	setupInstructions: ProviderSetupInstructions;
-
-	/** Authentication field definitions for this provider. At least one field must be required. */
+	/** Authentication field definitions for this provider */
 	auth: ProviderAuthConfig;
-
-	/** Creates a LangChain chat instance (e.g., ChatOpenAI, ChatAnthropic, ChatOllama). */
+	/** Creates a LangChain chat instance */
 	createChatInstance: (auth: AuthObject, modelId: string, options?: Partial<ChatModelConfig>) => BaseChatModel;
-
-	/** Validates authentication credentials for this provider. */
+	/** Validates authentication credentials for this provider */
 	validateAuth: (auth: AuthObject) => Promise<AuthValidationResult>;
-
-	/** Discovers available models from the provider's API. */
+	/** Discovers available models from the provider's API */
 	discoverModels: (auth: AuthObject) => Promise<string[]>;
-
-	/** Creates a LangChain embedding instance (optional - use EmbeddingProviderDefinition for type safety). */
+	/** Creates a LangChain embedding instance (optional) */
 	createEmbeddingInstance?: (auth: AuthObject, modelId: string) => EmbeddingsInterface;
 }
 
 /**
- * Interface for providers that support embedding models.
- * Extends BaseProviderDefinition with required createEmbeddingInstance method.
+ * Interface for providers that support embedding models
  */
 export interface EmbeddingProviderDefinition extends BaseProviderDefinition {
-	/** Creates a LangChain embedding instance. */
+	/** Creates a LangChain embedding instance */
 	createEmbeddingInstance: (auth: AuthObject, modelId: string) => EmbeddingsInterface;
-
-	/** Discovers available embedding models (optional - falls back to heuristic filtering if not provided). */
+	/** Discovers available embedding models */
 	discoverEmbeddingModels?: (auth: AuthObject) => Promise<string[]>;
 }
 
 /**
- * Type guard to check if a provider supports embeddings.
+ * Type guard to check if a provider supports embeddings
  */
 export function isEmbeddingProvider(provider: BaseProviderDefinition): provider is EmbeddingProviderDefinition {
 	return typeof provider.createEmbeddingInstance === "function";
